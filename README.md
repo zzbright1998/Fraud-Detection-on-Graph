@@ -3,5 +3,5 @@
 ## main.py
 Read whole graph
 
-## main.py
+## temporal.py
 Read temporal graph
