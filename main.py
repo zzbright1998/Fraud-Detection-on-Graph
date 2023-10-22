@@ -4,18 +4,21 @@ import os
 import copy 
 import torch_geometric as pyg
 import torch
-import networkx as nx
 import pandas as pd
 from torch_geometric.datasets import EllipticBitcoinDataset
 from torch_geometric.transforms import NormalizeFeatures
 from torch_geometric.utils.convert import from_networkx
-dataset = EllipticBitcoinDataset(root='data')
-
+dataset = EllipticBitcoinDataset(root='data/whole_graph')
+data = dataset[0]
 
 
 
 
 # -------------------------- GCN ------------------------------ # 
+import torch
+from torch.nn import Linear
+import torch.nn.functional as F
+from torch_geometric.nn import GCNConv
 class GCN(torch.nn.Module):
     def __init__(self, hidden_channels):
         super().__init__()
@@ -62,62 +65,62 @@ print(f'Test Accuracy: {test_acc:.4f}')
 
 
 # -------------------------- GAT ------------------------------ # 
-from torch_geometric.nn import GATConv
+# from torch_geometric.nn import GATConv
 
 
-class GAT(torch.nn.Module):
-    def __init__(self, hidden_channels, heads):
-        super().__init__()
-        torch.manual_seed(1234567)
-        self.conv1 = GATConv(dataset.num_features, hidden_channels, heads)
-        self.conv2 = GATConv(hidden_channels*heads, dataset.num_classes, heads)
+# class GAT(torch.nn.Module):
+#     def __init__(self, hidden_channels, heads):
+#         super().__init__()
+#         torch.manual_seed(1234567)
+#         self.conv1 = GATConv(dataset.num_features, hidden_channels, heads)
+#         self.conv2 = GATConv(hidden_channels*heads, dataset.num_classes, heads)
 
 
-    def forward(self, x, edge_index):
-        x = F.dropout(x, p=0.6, training=self.training)
-        x = self.conv1(x, edge_index)
-        x = F.elu(x)
-        x = F.dropout(x, p=0.6, training=self.training)
-        x = self.conv2(x, edge_index)
-        return x
+#     def forward(self, x, edge_index):
+#         x = F.dropout(x, p=0.6, training=self.training)
+#         x = self.conv1(x, edge_index)
+#         x = F.elu(x)
+#         x = F.dropout(x, p=0.6, training=self.training)
+#         x = self.conv2(x, edge_index)
+#         return x
 
-model = GAT(hidden_channels=8, heads=8)
-print(model)
+# model = GAT(hidden_channels=8, heads=8)
+# print(model)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
-criterion = torch.nn.CrossEntropyLoss()
+# optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
+# criterion = torch.nn.CrossEntropyLoss()
 
-def train():
-      model.train()
-      optimizer.zero_grad()  # Clear gradients.
-      out = model(data.x, data.edge_index)  # Perform a single forward pass.
-      loss = criterion(out[data.train_mask], data.y[data.train_mask])  # Compute the loss solely based on the training nodes.
-      loss.backward()  # Derive gradients.
-      optimizer.step()  # Update parameters based on gradients.
-      return loss
+# def train():
+#       model.train()
+#       optimizer.zero_grad()  # Clear gradients.
+#       out = model(data.x, data.edge_index)  # Perform a single forward pass.
+#       loss = criterion(out[data.train_mask], data.y[data.train_mask])  # Compute the loss solely based on the training nodes.
+#       loss.backward()  # Derive gradients.
+#       optimizer.step()  # Update parameters based on gradients.
+#       return loss
 
-def test(mask):
-      model.eval()
-      out = model(data.x, data.edge_index)
-      pred = out.argmax(dim=1)  # Use the class with highest probability.
-      correct = pred[mask] == data.y[mask]  # Check against ground-truth labels.
-      acc = int(correct.sum()) / int(mask.sum())  # Derive ratio of correct predictions.
-      return acc
+# def test(mask):
+#       model.eval()
+#       out = model(data.x, data.edge_index)
+#       pred = out.argmax(dim=1)  # Use the class with highest probability.
+#       correct = pred[mask] == data.y[mask]  # Check against ground-truth labels.
+#       acc = int(correct.sum()) / int(mask.sum())  # Derive ratio of correct predictions.
+#       return acc
 
 
-for epoch in range(1, 201):
-    loss = train()
-    val_acc = test(data.val_mask)
-    test_acc = test(data.test_mask)
-    print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
+# for epoch in range(1, 201):
+#     loss = train()
+#     val_acc = test(data.val_mask)
+#     test_acc = test(data.test_mask)
+#     print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
 
-# Testing
-model.eval()
-with torch.no_grad():
-    logits = model(data.x, data.edge_index)
-    pred = logits.argmax(dim=1)
-    test_acc = (pred[data.test_mask] == data.y[data.test_mask]).sum().item() / data.test_mask.sum().item()
-    print(f"Test Accuracy: {test_acc:.4f}")
+# # Testing
+# model.eval()
+# with torch.no_grad():
+#     logits = model(data.x, data.edge_index)
+#     pred = logits.argmax(dim=1)
+#     test_acc = (pred[data.test_mask] == data.y[data.test_mask]).sum().item() / data.test_mask.sum().item()
+#     print(f"Test Accuracy: {test_acc:.4f}")
 
 
 # -------------------------- GraphSAGE ------------------------------ # 
@@ -162,7 +165,7 @@ for epoch in range(200):
     loss = criterion(out[data.train_mask], data.y[data.train_mask])
     loss.backward()
     optimizer.step()
-    print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
+    # print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
 
 
 # Testing
