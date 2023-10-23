@@ -2,15 +2,24 @@ import torch
 from torch_geometric.datasets import EllipticBitcoinDataset
 import torch.nn as nn
 import torch.nn.functional as F
-from ogb.nodeproppred import Evaluator
+# from ogb.nodeproppred import Evaluator
 from sklearn import metrics as metrics
 
-dataset = EllipticBitcoinDataset(root='data/whole_graph')
-data = dataset[0]
+
+
 
 # licit -> label 0
 # unknown -> label 2
 # illicit -> label 1
+if torch.cuda.is_available():
+    device = torch.device("cuda:1")  # This selects the first GPU. For second GPU use "cuda:1" and so on.
+    print("Running on the GPU")
+else:
+    device = torch.device("cpu")
+    print("Running on the CPU")
+
+dataset = EllipticBitcoinDataset(root='data/whole_graph')
+data = dataset[0]
 
 # -------------------------- GCN ------------------------------ # 
 from torch_geometric.nn import GCNConv
@@ -18,7 +27,7 @@ from torch_geometric.nn import GCNConv
 class GCN(torch.nn.Module):
     def __init__(self, hidden_channels, num_layers, dropout):
         super().__init__()
-        torch.manual_seed(1234567)
+        torch.manual_seed(777)
 
         # Convolution layers
         if num_layers > 1:
@@ -60,7 +69,7 @@ from torch_geometric.nn import GATConv
 class GAT(torch.nn.Module):
     def __init__(self, hidden_channels, heads, num_layers, dropout):
         super().__init__()
-        torch.manual_seed(1234567)
+        torch.manual_seed(777)
         self.num_layers = num_layers
         
         if num_layers > 1:
@@ -104,7 +113,7 @@ from torch_geometric.nn import SAGEConv
 class GraphSAGENet(nn.Module):
     def __init__(self, hidden_channels, num_layers, dropout):
         super().__init__()
-        torch.manual_seed(1234567)
+        torch.manual_seed(777)
 
         if num_layers > 1:
             # Convolution layers
@@ -168,17 +177,24 @@ def test(model, data):
     output = model(data.x, data.edge_index)
     y_pred = output.argmax(dim=1)
 
-    train_acc = metrics.accuracy_score(data.y[data.train_mask], y_pred[data.train_mask])
-    test_acc = metrics.accuracy_score(data.y[data.test_mask], y_pred[data.test_mask])
-    test_pre = metrics.precision_score(data.y[data.test_mask], y_pred[data.test_mask])
-    test_recall = metrics.recall_score(data.y[data.test_mask], y_pred[data.test_mask])
-    test_f1 = metrics.f1_score(data.y[data.test_mask], y_pred[data.test_mask])
+    # train_acc = metrics.accuracy_score(data.y[data.train_mask], y_pred[data.train_mask])
+    # test_acc = metrics.accuracy_score(data.y[data.test_mask], y_pred[data.test_mask])
+    # test_pre = metrics.precision_score(data.y[data.test_mask], y_pred[data.test_mask])
+    # test_recall = metrics.recall_score(data.y[data.test_mask], y_pred[data.test_mask])
+    # test_f1 = metrics.f1_score(data.y[data.test_mask], y_pred[data.test_mask])
+    train_acc = metrics.accuracy_score(data.y[data.train_mask].cpu(), y_pred[data.train_mask].cpu())
+    test_acc = metrics.accuracy_score(data.y[data.test_mask].cpu(), y_pred[data.test_mask].cpu())
+    test_pre = metrics.precision_score(data.y[data.test_mask].cpu(), y_pred[data.test_mask].cpu())
+    test_recall = metrics.recall_score(data.y[data.test_mask].cpu(), y_pred[data.test_mask].cpu())
+    test_f1 = metrics.f1_score(data.y[data.test_mask].cpu(), y_pred[data.test_mask].cpu())
+
     return train_acc, test_acc, test_pre, test_recall, test_f1
 
 #--------------------------------Run Model-------------------------------#
 def runModel(model, data, optimizer, loss_fn):
     model.reset_parameters()
-    for epoch in range(1, 101):
+    data = data.to(device)
+    for epoch in range(1, 501):
         loss = train(model, data, optimizer, loss_fn)
         result = test(model, data)
         train_acc, _, _, _, _ = result
@@ -195,11 +211,11 @@ def runModel(model, data, optimizer, loss_fn):
           f'Test F1: {100*test_f1:.2f}%  ')
 
 
-weight = torch.tensor([0.1, 0.9])
-model_GAT = GAT(hidden_channels=64, heads=8, num_layers=2, dropout=0.3)
-model_SAGE = GraphSAGENet(hidden_channels=64, num_layers=2, dropout=0.3)
-model_GCN = GCN(hidden_channels=64, num_layers=2, dropout=0.3)
-model = model_SAGE
+weight = torch.tensor([11, 1.1]).to(device)
+model_GAT = GAT(hidden_channels=64, heads=8, num_layers=2, dropout=0.3).to(device)
+model_SAGE = GraphSAGENet(hidden_channels=64, num_layers=2, dropout=0.3).to(device)
+model_GCN = GCN(hidden_channels=128, num_layers=2, dropout=0.3).to(device)
+model = model_GAT
 print(model)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
 loss_fn = torch.nn.CrossEntropyLoss(weight = weight)
