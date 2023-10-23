@@ -1,183 +1,207 @@
-import numpy as np
-import random
-import os
-import copy 
-import torch_geometric as pyg
 import torch
-import pandas as pd
 from torch_geometric.datasets import EllipticBitcoinDataset
-from torch_geometric.transforms import NormalizeFeatures
-from torch_geometric.utils.convert import from_networkx
-
-import torch
-from torch.nn import Linear
+import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
+from ogb.nodeproppred import Evaluator
+from sklearn import metrics as metrics
 
 dataset = EllipticBitcoinDataset(root='data/whole_graph')
 data = dataset[0]
 
-
-
+# licit -> label 0
+# unknown -> label 2
+# illicit -> label 1
 
 # -------------------------- GCN ------------------------------ # 
-import torch
-from torch.nn import Linear
-import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
-# class GCN(torch.nn.Module):
-#     def __init__(self, hidden_channels):
-#         super().__init__()
-#         torch.manual_seed(1234567)
-#         self.conv1 = GCNConv(dataset.num_features, hidden_channels)
-#         self.conv2 = GCNConv(hidden_channels, dataset.num_classes)
 
-#     def forward(self, x, edge_index):
-#         x = self.conv1(x, edge_index)
-#         x = x.relu()
-#         x = F.dropout(x, p=0.5, training=self.training)
-#         x = self.conv2(x, edge_index)
-#         return x
+class GCN(torch.nn.Module):
+    def __init__(self, hidden_channels, num_layers, dropout):
+        super().__init__()
+        torch.manual_seed(1234567)
 
-# model = GCN(hidden_channels=16)
-# optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
-# criterion = torch.nn.CrossEntropyLoss()
+        # Convolution layers
+        if num_layers > 1:
+            self.convs = nn.ModuleList([GCNConv(dataset.num_features, hidden_channels)])
+            self.convs.extend([GCNConv(hidden_channels, hidden_channels) for i in range(num_layers - 2)])
+            self.convs.append(GCNConv(hidden_channels, dataset.num_classes))
+        
+            # Batch normilization 
+            self.bns = nn.ModuleList([nn.BatchNorm1d(hidden_channels) 
+                                     for i in range(num_layers - 1)])
+        else:
+            self.convs = nn.ModuleList([GCNConv(dataset.num_features, dataset.num_classes)])
+            self.bns = nn.ModuleList([])
 
-# def train():
-#       model.train()
-#       optimizer.zero_grad()  # Clear gradients.
-#       out = model(data.x, data.edge_index)  # Perform a single forward pass.
-#       loss = criterion(out[data.train_mask], data.y[data.train_mask])  # Compute the loss solely based on the training nodes.
-#       loss.backward()  # Derive gradients.
-#       optimizer.step()  # Update parameters based on gradients.
-#       return loss
+        # Softmax layer
+        self.softmax = nn.LogSoftmax(1)
 
-# def test():
-#       model.eval()
-#       out = model(data.x, data.edge_index)
-#       pred = out.argmax(dim=1)  # Use the class with highest probability.
-#       test_correct = pred[data.test_mask] == data.y[data.test_mask]  # Check against ground-truth labels.
-#       test_acc = int(test_correct.sum()) / int(data.test_mask.sum())  # Derive ratio of correct predictions.
-#       return test_acc
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
 
+    # initialize parameters
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for bn in self.bns:
+            bn.reset_parameters()
 
-# for epoch in range(1, 101):
-#     loss = train()
-#     print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}')
-
-# test_acc = test()
-# print(f'Test Accuracy: {test_acc:.4f}')
-
+    def forward(self, x, edge_index):
+        for gcn, bn in zip(self.convs, self.bns):
+            x = self.dropout(torch.relu(bn(gcn(x, edge_index))))
+        x = self.convs[-1](x, edge_index)
+        
+        return self.softmax(x)
 
 
 # -------------------------- GAT ------------------------------ # 
 from torch_geometric.nn import GATConv
 
-
 class GAT(torch.nn.Module):
-    def __init__(self, hidden_channels, heads):
+    def __init__(self, hidden_channels, heads, num_layers, dropout):
         super().__init__()
         torch.manual_seed(1234567)
-        self.conv1 = GATConv(dataset.num_features, hidden_channels, heads)
-        self.conv2 = GATConv(hidden_channels*heads, dataset.num_classes, heads)
+        self.num_layers = num_layers
+        
+        if num_layers > 1:
+            # GAT layers
+            self.convs = nn.ModuleList([GATConv(dataset.num_features, hidden_channels, heads)])
+            self.convs.extend([GATConv(heads*hidden_channels, hidden_channels, heads) for i in range(num_layers - 2)])
+            self.convs.append(GATConv(heads*hidden_channels, dataset.num_classes))
 
+            # Batch Normilization
+            self.bns = nn.ModuleList([nn.BatchNorm1d(heads*hidden_channels) 
+                                     for i in range(num_layers - 1)])
+        else:
+            self.convs = nn.ModuleList([GATConv(dataset.num_features, dataset.num_classes)])
+            self.bns = nn.ModuleList([])
+
+         # Softmax layer
+        self.softmax = nn.LogSoftmax(1)
+
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+
+    # initialize parameters
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for bn in self.bns:
+            bn.reset_parameters()
 
     def forward(self, x, edge_index):
-        x = F.dropout(x, p=0.6, training=self.training)
-        x = self.conv1(x, edge_index)
-        x = F.elu(x)
-        x = F.dropout(x, p=0.6, training=self.training)
-        x = self.conv2(x, edge_index)
-        return x
+        for gat, bn in zip(self.convs, self.bns):
+            x = self.dropout(torch.relu(bn(gat(x, edge_index))))
+        x = self.convs[-1](x, edge_index)
+        
+        return self.softmax(x)
 
-model = GAT(hidden_channels=8, heads=8)
-print(model)
-
-optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
-criterion = torch.nn.CrossEntropyLoss()
-
-def train():
-      model.train()
-      optimizer.zero_grad()  # Clear gradients.
-      out = model(data.x, data.edge_index)  # Perform a single forward pass.
-      loss = criterion(out[data.train_mask], data.y[data.train_mask])  # Compute the loss solely based on the training nodes.
-      loss.backward()  # Derive gradients.
-      optimizer.step()  # Update parameters based on gradients.
-      return loss
-
-def test(mask):
-      model.eval()
-      out = model(data.x, data.edge_index)
-      pred = out.argmax(dim=1)  # Use the class with highest probability.
-      correct = pred[mask] == data.y[mask]  # Check against ground-truth labels.
-      acc = int(correct.sum()) / int(mask.sum())  # Derive ratio of correct predictions.
-      return acc
-
-
-for epoch in range(1, 201):
-    loss = train()
-    val_acc = test(data.val_mask)
-    test_acc = test(data.test_mask)
-    print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
-
-# Testing
-model.eval()
-with torch.no_grad():
-    logits = model(data.x, data.edge_index)
-    pred = logits.argmax(dim=1)
-    test_acc = (pred[data.test_mask] == data.y[data.test_mask]).sum().item() / data.test_mask.sum().item()
-    print(f"Test Accuracy: {test_acc:.4f}")
 
 
 # -------------------------- GraphSAGE ------------------------------ # 
+from torch_geometric.nn import SAGEConv
 
-# import torch
-# import torch.nn as nn
-# import torch.optim as optim
-# from torch_geometric.datasets import Planetoid
-# from torch_geometric.data import DataLoader
-# from torch_geometric.nn import SAGEConv
+class GraphSAGENet(nn.Module):
+    def __init__(self, hidden_channels, num_layers, dropout):
+        super().__init__()
+        torch.manual_seed(1234567)
+
+        if num_layers > 1:
+            # Convolution layers
+            self.convs = nn.ModuleList([SAGEConv(dataset.num_features, hidden_channels)])
+            self.convs.extend([SAGEConv(hidden_channels, hidden_channels) for i in range(num_layers - 2)])
+            self.convs.append(SAGEConv(hidden_channels, dataset.num_classes))
+        
+             # Batch normilization 
+            self.bns = nn.ModuleList([nn.BatchNorm1d(hidden_channels) 
+                                     for i in range(num_layers - 1)])
+
+        else:
+            self.convs = nn.ModuleList([SAGEConv(dataset.num_features, dataset.num_classes)])
+            self.bns = nn.ModuleList([])
+
+        # Softmax layer
+        self.softmax = nn.LogSoftmax(1)
+
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+
+    # initialize parameters
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for bn in self.bns:
+            bn.reset_parameters()
+
+    def forward(self, x, edge_index):
+        for gcn, bn in zip(self.convs, self.bns):
+            x = self.dropout(torch.relu(bn(gcn(x, edge_index))))
+        x = self.convs[-1](x, edge_index)
+        
+        return self.softmax(x)
+    
 
 
-# # Define the GraphSAGE model
-# class GraphSAGENet(nn.Module):
-#     def __init__(self, in_channels, hidden_channels, out_channels):
-#         super(GraphSAGENet, self).__init__()
-#         self.conv1 = SAGEConv(in_channels, hidden_channels)
-#         self.conv2 = SAGEConv(hidden_channels, out_channels)
+#----------------------------Train---------------------------------------#
+def train(model, data, optimizer, loss_fn):
+    model.train()
 
-#     def forward(self, data):
-#         x, edge_index = data.x, data.edge_index
-#         x = self.conv1(x, edge_index)
-#         x = torch.relu(x)
-#         x = self.conv2(x, edge_index)
-#         return x
+    # Clear gradients.
+    optimizer.zero_grad()
 
-# # Instantiate the model
-# model = GraphSAGENet(in_channels=dataset.num_features, hidden_channels=64, out_channels=dataset.num_classes)
+    # feed datas into the model
+    output = model(data.x, data.edge_index)
+    
+    # Get the model's predictions and labels
+    pred, label = output[data.train_mask], data.y[data.train_mask].view(-1)
 
-# # Define the loss function and optimizer
-# criterion = nn.CrossEntropyLoss()
-# optimizer = optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+    loss = loss_fn(pred, label)
 
-# # Split the dataset into a training and testing set
-# data = dataset[0]
+    loss.backward()  # Derive gradients.
+    optimizer.step()  # Update parameters based on gradients.
+    return loss.item()
 
-# # Training
-# model.train()
-# for epoch in range(200):
-#     optimizer.zero_grad()
-#     out = model(data)
-#     loss = criterion(out[data.train_mask], data.y[data.train_mask])
-#     loss.backward()
-#     optimizer.step()
-#     # print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
+#------------------------------Test-------------------------------------#
+def test(model, data):
+    model.eval()
+
+    output = model(data.x, data.edge_index)
+    y_pred = output.argmax(dim=1)
+
+    train_acc = metrics.accuracy_score(data.y[data.train_mask], y_pred[data.train_mask])
+    test_acc = metrics.accuracy_score(data.y[data.test_mask], y_pred[data.test_mask])
+    test_pre = metrics.precision_score(data.y[data.test_mask], y_pred[data.test_mask])
+    test_recall = metrics.recall_score(data.y[data.test_mask], y_pred[data.test_mask])
+    test_f1 = metrics.f1_score(data.y[data.test_mask], y_pred[data.test_mask])
+    return train_acc, test_acc, test_pre, test_recall, test_f1
+
+#--------------------------------Run Model-------------------------------#
+def runModel(model, data, optimizer, loss_fn):
+    model.reset_parameters()
+    for epoch in range(1, 101):
+        loss = train(model, data, optimizer, loss_fn)
+        result = test(model, data)
+        train_acc, _, _, _, _ = result
+    
+        print(f'Epoch: {epoch:02d}, '
+              f'Loss: {loss:.4f}, '
+              f'Train: {100*train_acc:.2f}%')
+
+    result = test(model, data)
+    _, test_acc, test_pre, test_recall, test_f1 = result
+    print(f'Test Accuracy: {100*test_acc:.2f}%  '
+          f'Test Precision: {100*test_pre:.2f}%  '
+          f'Test Recall: {100*test_recall:.2f}%  '
+          f'Test F1: {100*test_f1:.2f}%  ')
 
 
-# # Testing
-# model.eval()
-# with torch.no_grad():
-#     logits = model(data)
-#     pred = logits.argmax(dim=1)
-#     test_acc = (pred[data.test_mask] == data.y[data.test_mask]).sum().item() / data.test_mask.sum().item()
-#     print(f"Test Accuracy: {test_acc:.4f}")
+weight = torch.tensor([0.1, 0.9])
+model_GAT = GAT(hidden_channels=64, heads=8, num_layers=2, dropout=0.3)
+model_SAGE = GraphSAGENet(hidden_channels=64, num_layers=2, dropout=0.3)
+model_GCN = GCN(hidden_channels=64, num_layers=2, dropout=0.3)
+model = model_SAGE
+print(model)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
+loss_fn = torch.nn.CrossEntropyLoss(weight = weight)
+
+runModel(model, data, optimizer, loss_fn)
