@@ -1,13 +1,5 @@
 # Fraud-Detection-on-Graph
 
-## TODO LIST
-### Yuchen
-#### 10/22/2023
-1. write the val_mask for GAT method
-2. fix line 168 bug for GraphSAGE method
-
-### Yuxuan
-
 ## File Description
 ## main.py
 Read whole graph
